@@ -873,6 +873,12 @@ impl<'a> ContentOperations<'a> {
         }
     }
 
+    /// The input not decoded yet. Once the iterator has stopped this is empty, or only comments and white space,
+    /// when the whole stream was read; anything else is input that [`content`] silently ignores (Paradise patch).
+    pub fn remaining(&self) -> &'a [u8] {
+        self.input
+    }
+
     fn fail(&mut self) -> Option<crate::Result<Operation>> {
         self.finished = true;
         Some(Err(error::ParseError::InvalidContentStream.into()))
@@ -931,6 +937,17 @@ mod tests {
 
     fn tstrip<O>(r: NomResult<O>) -> Option<O> {
         r.ok().and_then(|(i, o)| if !i.is_empty() { None } else { Some(o) })
+    }
+
+    #[test]
+    fn content_operations_remaining_shows_ignored_trailing_input() {
+        let mut ops = ContentOperations::new(b"q /Im1 Do Q ] /Im2 Do");
+        let names: Vec<String> = ops.by_ref().map(|op| op.unwrap().operator).collect();
+        assert_eq!(names, ["q", "Do", "Q"]);
+        assert_eq!(ops.remaining(), b"] /Im2 Do");
+        let mut whole = ContentOperations::new(b"q Q\n% end\n");
+        assert_eq!(whole.by_ref().count(), 2);
+        assert!(whole.remaining().is_empty() || whole.remaining().starts_with(b"%"));
     }
 
     #[test]
