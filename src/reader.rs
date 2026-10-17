@@ -1037,7 +1037,7 @@ impl<'a> Reader<'a> {
     }
 
     /// Get object offset by object ID.
-    fn get_offset(&self, id: ObjectId) -> Result<u32> {
+    fn get_offset(&self, id: ObjectId) -> Result<u64> {
         let entry = self.document.reference_table.get(id.0).ok_or(Error::MissingXrefEntry)?;
         match *entry {
             XrefEntry::Normal { offset, generation } if generation == id.1 => Ok(offset),
@@ -1337,7 +1337,7 @@ impl<'a> Reader<'a> {
         let mut xref = Xref::new(markers.len() as u32, XrefType::CrossReferenceTable);
         for (offset, (number, generation)) in markers {
             // Incremental updates append, so later revisions win.
-            xref.insert(number, XrefEntry::Normal { offset, generation });
+            xref.insert(number, XrefEntry::Normal { offset: offset as u64, generation });
         }
         // Normalize like `resolve_xref_and_trailer`: size spans object numbers
         // up to the highest, not physical copies across incremental updates.

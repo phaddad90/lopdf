@@ -103,7 +103,7 @@ impl Document {
             }
             XrefType::CrossReferenceStream => {
                 // Cross Reference Stream instead of XRef and Trailer
-                self.write_cross_reference_stream(target, xref, xref_start as u32)?;
+                self.write_cross_reference_stream(target, xref, xref_start as u64)?;
             }
         }
         // Write `startxref` part of trailer
@@ -220,7 +220,7 @@ impl Document {
     /// Insert an `Object` to the end of the PDF (not visible when inspecting `Document`).
     /// Note: This is different from the "Cross Reference Table".
     fn write_cross_reference_stream<W: Write>(
-        &mut self, file: &mut CountingWrite<&mut W>, xref: &mut Xref, xref_start: u32,
+        &mut self, file: &mut CountingWrite<&mut W>, xref: &mut Xref, xref_start: u64,
     ) -> Result<()> {
         // Increment max_id to account for CRS.
         self.max_id += 1;
@@ -235,8 +235,8 @@ impl Document {
         self.trailer.set("Type", Name(b"XRef".to_vec()));
         // Update `max_id` in trailer
         self.trailer.set("Size", i64::from(self.max_id + 1));
-        // `[u8, u32, u16]` per entry (the PDF default is `[1 2 1]`).
-        self.trailer.set("W", Array(vec![Integer(1), Integer(4), Integer(2)]));
+        // Paradise patch: `[u8, u64, u16]` per entry so offsets past 4 GiB fit.
+        self.trailer.set("W", Array(vec![Integer(1), Integer(8), Integer(2)]));
         // Note that `ASCIIHexDecode` does not work correctly,
         // but is still useful for debugging sometimes.
         let filter = XRefStreamFilter::None;
@@ -501,13 +501,13 @@ impl Writer {
                     XrefEntry::Free => {
                         // Type 0
                         xref_stream.push(0);
-                        xref_stream.extend(obj_id.to_be_bytes());
+                        xref_stream.extend(u64::from(obj_id).to_be_bytes());
                         xref_stream.extend(vec![0, 0]); // TODO add generation number
                     }
                     XrefEntry::UnusableFree => {
                         // Type 0
                         xref_stream.push(0);
-                        xref_stream.extend(obj_id.to_be_bytes());
+                        xref_stream.extend(u64::from(obj_id).to_be_bytes());
                         xref_stream.extend(65535_u16.to_be_bytes());
                     }
                     XrefEntry::Normal { offset, generation } => {
@@ -519,7 +519,7 @@ impl Writer {
                     XrefEntry::Compressed { container, index } => {
                         // Type 2
                         xref_stream.push(2);
-                        xref_stream.extend(container.to_be_bytes());
+                        xref_stream.extend(u64::from(container).to_be_bytes());
                         xref_stream.extend(index.to_be_bytes());
                     }
                 }
@@ -542,7 +542,7 @@ impl Writer {
     fn write_indirect_object<W: Write>(
         file: &mut CountingWrite<&mut W>, id: u32, generation: u16, object: &Object, xref: &mut Xref,
     ) -> Result<()> {
-        let offset = file.bytes_written as u32;
+        let offset = file.bytes_written as u64;
         xref.insert(id, XrefEntry::Normal { offset, generation });
         write!(
             file,
@@ -768,4 +768,24 @@ fn save_document() {
     assert!(file_path.is_file());
     // Check if the file is above 400 bytes (should be about 610 bytes)
     assert!(file_path.metadata().unwrap().len() > 400);
+}
+
+#[test]
+fn xref_stream_round_trips_an_offset_past_4_gib() {
+    // Paradise patch: xref offsets are u64 and the stream is written with W [1 8 2].
+    let mut doc = Document::with_version("1.5");
+    doc.max_id = 1;
+    let mut xref = Xref::new(0, XrefType::CrossReferenceStream);
+    xref.insert(1, XrefEntry::Normal { offset: 0x1_0000_0010, generation: 0 });
+    let mut buf = Vec::new();
+    // Pretend 4 GiB + 32 bytes were already written, so the xref stream object itself lands past u32::MAX.
+    let mut file = CountingWrite { inner: &mut buf, bytes_written: 0x1_0000_0020 };
+    doc.write_cross_reference_stream(&mut file, &mut xref, 0x1_0000_0020).unwrap();
+
+    let w: Vec<i64> = doc.trailer.get(b"W").unwrap().as_array().unwrap().iter().map(|o| o.as_i64().unwrap()).collect();
+    assert_eq!(w, [1, 8, 2]);
+    let (content, _, _) = Writer::create_xref_steam(&xref, XRefStreamFilter::None).unwrap();
+    let (back, _) = crate::parser_aux::decode_xref_stream(Stream::new(doc.trailer.clone(), content)).unwrap();
+    assert!(matches!(back.get(1), Some(XrefEntry::Normal { offset: 0x1_0000_0010, generation: 0 })), "{:?}", back.get(1));
+    assert!(matches!(back.get(2), Some(XrefEntry::Normal { offset: 0x1_0000_0020, generation: 0 })), "{:?}", back.get(2));
 }

@@ -656,7 +656,7 @@ pub fn decode_xref_stream_with_limit(
                     }
                     2 => {
                         // compressed object
-                        let container = read_big_endian_integer(&mut reader, bytes2.as_mut_slice())?;
+                        let container = read_big_endian_integer(&mut reader, bytes2.as_mut_slice())? as u32;
                         let index = read_big_endian_integer(&mut reader, bytes3.as_mut_slice())? as u16;
                         Some(XrefEntry::Compressed { container, index })
                     }
@@ -690,11 +690,11 @@ pub fn decode_xref_stream_with_limit(
     Ok((xref, dict))
 }
 
-fn read_big_endian_integer(reader: &mut Cursor<Vec<u8>>, buffer: &mut [u8]) -> Result<u32> {
+fn read_big_endian_integer(reader: &mut Cursor<Vec<u8>>, buffer: &mut [u8]) -> Result<u64> {
     reader.read_exact(buffer)?;
-    let mut value = 0;
+    let mut value = 0u64;
     for &mut byte in buffer {
-        value = (value << 8) + u32::from(byte);
+        value = (value << 8) + u64::from(byte);
     }
     Ok(value)
 }

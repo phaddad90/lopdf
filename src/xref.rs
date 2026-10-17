@@ -27,7 +27,7 @@ pub enum XrefType {
 pub enum XrefEntry {
     Free, // TODO add generation number
     UnusableFree,
-    Normal { offset: u32, generation: u16 },
+    Normal { offset: u64, generation: u16 },
     Compressed { container: u32, index: u16 },
 }
 
@@ -98,7 +98,7 @@ impl XrefEntry {
             XrefEntry::Normal { offset, generation } => {
                 // Type 1: Uncompressed object
                 encode_field(1, widths[0], &mut result);
-                encode_field(*offset as u64, widths[1], &mut result);
+                encode_field(*offset, widths[1], &mut result);
                 encode_field(*generation as u64, widths[2], &mut result);
             }
             XrefEntry::Compressed { container, index } => {
@@ -209,7 +209,7 @@ impl<'a> XrefStreamBuilder<'a> {
         for (_, entry) in &self.entries {
             match entry {
                 XrefEntry::Normal { offset, generation } => {
-                    max_offset = max_offset.max(*offset as u64);
+                    max_offset = max_offset.max(*offset);
                     max_gen = max_gen.max(*generation);
                 }
                 XrefEntry::Compressed { container, index } => {
